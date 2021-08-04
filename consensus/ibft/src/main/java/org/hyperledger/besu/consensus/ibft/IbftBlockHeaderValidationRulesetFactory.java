@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.consensus.ibft;
 
+import org.hyperledger.besu.consensus.common.bft.BftExtraDataCodec;
 import org.hyperledger.besu.consensus.common.bft.BftHelpers;
 import org.hyperledger.besu.consensus.common.bft.headervalidationrules.BftCoinbaseValidationRule;
 import org.hyperledger.besu.consensus.common.bft.headervalidationrules.BftCommitSealsValidationRule;
@@ -27,8 +28,9 @@ import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.GasLimitRange
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.GasUsageValidationRule;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.TimestampBoundedByFutureParameter;
 import org.hyperledger.besu.ethereum.mainnet.headervalidationrules.TimestampMoreRecentThanParent;
+import org.hyperledger.besu.ethereum.util.MarklarUtils;
 
-import org.apache.tuweni.units.bigints.UInt256;
+import java.math.BigInteger;
 
 public class IbftBlockHeaderValidationRulesetFactory {
 
@@ -52,9 +54,17 @@ public class IbftBlockHeaderValidationRulesetFactory {
         .addRule(
             new ConstantFieldValidationRule<>(
                 "OmmersHash", BlockHeader::getOmmersHash, Hash.EMPTY_LIST_HASH))
+        // marklar's custom header difficulty validator
         .addRule(
-            new ConstantFieldValidationRule<>(
-                "Difficulty", BlockHeader::getDifficulty, UInt256.ONE))
+            (header, parent, protocolContext) -> {
+              BftExtraDataCodec bftExtraDataCodec = new IbftExtraDataCodec();
+              BigInteger newDifficulty =
+                  MarklarUtils.getNextBlockDifficulty(
+                      parent,
+                      protocolContext,
+                      blockHeader -> bftExtraDataCodec.decode(blockHeader).getValidators());
+              return header.getDifficulty().toBigInteger().equals(newDifficulty);
+            })
         .addRule(new ConstantFieldValidationRule<>("Nonce", BlockHeader::getNonce, 0L))
         .addRule(new BftValidatorsValidationRule())
         .addRule(new BftCoinbaseValidationRule())

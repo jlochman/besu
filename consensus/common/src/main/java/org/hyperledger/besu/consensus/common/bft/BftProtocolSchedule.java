@@ -17,6 +17,7 @@ package org.hyperledger.besu.consensus.common.bft;
 import org.hyperledger.besu.config.BftConfigOptions;
 import org.hyperledger.besu.config.BftFork;
 import org.hyperledger.besu.config.GenesisConfigOptions;
+import org.hyperledger.besu.config.MarklarConfigOptions;
 import org.hyperledger.besu.ethereum.core.Address;
 import org.hyperledger.besu.ethereum.core.PrivacyParameters;
 import org.hyperledger.besu.ethereum.core.Wei;
@@ -28,6 +29,7 @@ import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolScheduleBuilder;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpecAdapters;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpecBuilder;
+import org.hyperledger.besu.ethereum.util.MarklarUtils;
 
 import java.math.BigInteger;
 import java.util.HashMap;
@@ -130,6 +132,21 @@ public class BftProtocolSchedule {
       throw new IllegalArgumentException("Bft Block reward in config cannot be negative");
     }
 
+    // validates marklar config
+    MarklarConfigOptions.validate();
+    try {
+      Address.fromHexString(MarklarConfigOptions.operatorAddress);
+    } catch (final IllegalArgumentException e) {
+      throw new IllegalArgumentException(
+          "marklar.operator_address is not a valid ethereum address", e);
+    }
+    try {
+      Address.fromHexString(MarklarConfigOptions.treasuryAddress);
+    } catch (final IllegalArgumentException e) {
+      throw new IllegalArgumentException(
+          "marklar.treasury_address is not a valid ethereum address", e);
+    }
+
     builder
         .blockHeaderValidatorBuilder(
             blockHeaderRuleset.apply(configOptions.getBlockPeriodSeconds()))
@@ -138,7 +155,13 @@ public class BftProtocolSchedule {
         .blockBodyValidatorBuilder(MainnetBlockBodyValidator::new)
         .blockValidatorBuilder(MainnetProtocolSpecs.blockValidatorBuilder(goQuorumMode))
         .blockImporterBuilder(MainnetBlockImporter::new)
-        .difficultyCalculator((time, parent, protocolContext) -> BigInteger.ONE)
+        // register marklar's custom difficulty calculator
+        .difficultyCalculator(
+            (time, parent, protocolContext) ->
+                MarklarUtils.getNextBlockDifficulty(
+                    parent,
+                    protocolContext,
+                    header -> bftExtraDataCodec.decode(header).getValidators()))
         .blockReward(Wei.of(blockReward))
         .skipZeroBlockRewards(true)
         .blockHeaderFunctions(BftBlockHeaderFunctions.forOnChainBlock(bftExtraDataCodec));

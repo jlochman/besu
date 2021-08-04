@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.mainnet;
 
+import org.hyperledger.besu.config.MarklarConfigOptions;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.core.Account;
 import org.hyperledger.besu.ethereum.core.AccountState;
@@ -31,6 +32,7 @@ import org.hyperledger.besu.ethereum.core.fees.TransactionPriceCalculator;
 import org.hyperledger.besu.ethereum.privacy.storage.PrivateMetadataUpdater;
 import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
 import org.hyperledger.besu.ethereum.transaction.TransactionInvalidReason;
+import org.hyperledger.besu.ethereum.util.MarklarUtils;
 import org.hyperledger.besu.ethereum.vm.BlockHashLookup;
 import org.hyperledger.besu.ethereum.vm.Code;
 import org.hyperledger.besu.ethereum.vm.GasCalculator;
@@ -389,7 +391,6 @@ public class MainnetTransactionProcessor {
 
       if (!worldState.getClass().equals(GoQuorumMutablePrivateWorldStateUpdater.class)) {
         // if this is not a private GoQuorum transaction we have to update the coinbase
-        final MutableAccount coinbase = worldState.getOrCreate(miningBeneficiary).getMutable();
         final Gas coinbaseFee = Gas.of(transaction.getGasLimit()).minus(refunded);
         if (blockHeader.getBaseFee().isPresent()) {
           final Wei baseFee = Wei.of(blockHeader.getBaseFee().get());
@@ -407,10 +408,16 @@ public class MainnetTransactionProcessor {
             blockHeader.getBaseFee().isPresent()
                 ? coinbaseFeePriceCalculator
                 : CoinbaseFeePriceCalculator.frontier();
-        final Wei coinbaseWeiDelta =
+        Wei coinbaseWeiDelta =
             coinbaseCalculator.price(coinbaseFee, transactionGasPrice, blockHeader.getBaseFee());
 
-        coinbase.incrementBalance(coinbaseWeiDelta);
+        // marklar's custom method to distribute fee reward
+        MarklarUtils.distributeReward(
+            coinbaseWeiDelta,
+            worldState,
+            miningBeneficiary,
+            MarklarConfigOptions.operatorBlockFeePart,
+            MarklarConfigOptions.treasuryBlockFeePart);
       }
 
       initialFrame.getSelfDestructs().forEach(worldState::deleteAccount);

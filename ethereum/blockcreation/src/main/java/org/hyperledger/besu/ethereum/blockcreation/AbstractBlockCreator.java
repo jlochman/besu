@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.blockcreation;
 
+import org.hyperledger.besu.config.MarklarConfigOptions;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.core.Address;
 import org.hyperledger.besu.ethereum.core.Block;
@@ -22,7 +23,6 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
 import org.hyperledger.besu.ethereum.core.BlockHeaderFunctions;
 import org.hyperledger.besu.ethereum.core.Difficulty;
-import org.hyperledger.besu.ethereum.core.EvmAccount;
 import org.hyperledger.besu.ethereum.core.Hash;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.core.ProcessableBlockHeader;
@@ -39,6 +39,7 @@ import org.hyperledger.besu.ethereum.mainnet.MainnetTransactionProcessor;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
 import org.hyperledger.besu.ethereum.mainnet.ScheduleBasedBlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.util.MarklarUtils;
 import org.hyperledger.besu.plugin.services.securitymodule.SecurityModuleException;
 
 import java.math.BigInteger;
@@ -160,7 +161,7 @@ public abstract class AbstractBlockCreator implements AsyncBlockCreator {
           disposableWorldState,
           processableBlockHeader,
           ommers,
-          protocolSpec.getBlockReward(),
+          MarklarUtils.getBlockReward(processableBlockHeader.getDifficulty()),
           protocolSpec.isSkipZeroBlockRewards())) {
         LOG.trace("Failed to apply mining reward, exiting.");
         throw new RuntimeException("Failed to apply mining reward.");
@@ -306,37 +307,16 @@ public abstract class AbstractBlockCreator implements AsyncBlockCreator {
       final Wei blockReward,
       final boolean skipZeroBlockRewards) {
 
-    // TODO(tmm): Added to make this work, should come from blockProcessor.
-    final int MAX_GENERATION = 6;
-    if (skipZeroBlockRewards && blockReward.isZero()) {
-      return true;
-    }
-
-    final Wei coinbaseReward =
-        protocolSpec
-            .getBlockProcessor()
-            .getCoinbaseReward(blockReward, header.getNumber(), ommers.size());
     final WorldUpdater updater = worldState.updater();
-    final EvmAccount beneficiary = updater.getOrCreate(miningBeneficiary);
 
-    beneficiary.getMutable().incrementBalance(coinbaseReward);
-    for (final BlockHeader ommerHeader : ommers) {
-      if (ommerHeader.getNumber() - header.getNumber() > MAX_GENERATION) {
-        LOG.trace(
-            "Block processing error: ommer block number {} more than {} generations current block number {}",
-            ommerHeader.getNumber(),
-            MAX_GENERATION,
-            header.getNumber());
-        return false;
-      }
-
-      final EvmAccount ommerCoinbase = updater.getOrCreate(ommerHeader.getCoinbase());
-      final Wei ommerReward =
-          protocolSpec
-              .getBlockProcessor()
-              .getOmmerReward(blockReward, header.getNumber(), ommerHeader.getNumber());
-      ommerCoinbase.getMutable().incrementBalance(ommerReward);
-    }
+    // marklar's custom method to distribute block reward
+    final Wei reward = MarklarUtils.getBlockReward(header.getDifficulty());
+    MarklarUtils.distributeReward(
+        reward,
+        updater,
+        miningBeneficiary,
+        MarklarConfigOptions.operatorBlockRewardPart,
+        MarklarConfigOptions.treasuryBlockRewardPart);
 
     updater.commit();
 

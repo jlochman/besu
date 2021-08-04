@@ -94,6 +94,8 @@ public class GenesisConfigFile {
   public GenesisConfigOptions getConfigOptions(final Map<String, String> overrides) {
     final ObjectNode config =
         JsonUtil.getObjectNode(configRoot, "config").orElse(JsonUtil.createEmptyObjectNode());
+    MarklarConfigOptions.init(configRoot);
+
     return JsonGenesisConfigOptions.fromJsonObjectWithOverrides(config, overrides);
   }
 

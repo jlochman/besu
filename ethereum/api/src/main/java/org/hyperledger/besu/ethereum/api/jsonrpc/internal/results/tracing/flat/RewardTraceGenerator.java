@@ -14,13 +14,18 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.tracing.flat;
 
+import org.hyperledger.besu.config.MarklarConfigOptions;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.tracing.Trace;
 import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.Gas;
+import org.hyperledger.besu.ethereum.core.GasAndAccessedState;
+import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.Wei;
 import org.hyperledger.besu.ethereum.mainnet.MiningBeneficiaryCalculator;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.util.MarklarUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,48 +50,72 @@ public class RewardTraceGenerator {
     final List<Trace> flatTraces = new ArrayList<>();
 
     final BlockHeader blockHeader = block.getHeader();
-    final List<BlockHeader> ommers = block.getBody().getOmmers();
     final ProtocolSpec protocolSpec = protocolSchedule.getByBlockNumber(blockHeader.getNumber());
-    final Wei blockReward = protocolSpec.getBlockReward();
     final MiningBeneficiaryCalculator miningBeneficiaryCalculator =
         protocolSpec.getMiningBeneficiaryCalculator();
 
-    final Wei coinbaseReward =
-        protocolSpec
-            .getBlockProcessor()
-            .getCoinbaseReward(blockReward, blockHeader.getNumber(), ommers.size());
+    final Wei blockReward = MarklarUtils.getBlockReward(blockHeader.getDifficulty());
+    Wei feeReward = Wei.ZERO;
+    // this calculation isn't exact, needs to be fixed
+    for (Transaction tx : block.getBody().getTransactions()) {
+      GasAndAccessedState state =
+          protocolSpec.getGasCalculator().transactionIntrinsicGasCostAndAccessedState(tx);
+      Gas gasUsed = state.getGas();
+      Wei txFee = gasUsed.priceFor(tx.getGasPrice().orElse(Wei.ZERO));
+      feeReward = feeReward.plus(txFee);
+    }
 
-    // add uncle reward traces
-    ommers.forEach(
-        ommerBlockHeader -> {
-          final Wei ommerReward =
-              protocolSpec
-                  .getBlockProcessor()
-                  .getOmmerReward(
-                      blockReward, blockHeader.getNumber(), ommerBlockHeader.getNumber());
-          final Action.Builder uncleActionBuilder =
-              Action.builder()
-                  .author(
-                      miningBeneficiaryCalculator
-                          .calculateBeneficiary(ommerBlockHeader)
-                          .toHexString())
-                  .rewardType(UNCLE_LABEL)
-                  .value(ommerReward.toShortHexString());
-          flatTraces.add(
-              RewardTrace.builder()
-                  .actionBuilder(uncleActionBuilder)
-                  .blockHash(block.getHash().toHexString())
-                  .blockNumber(blockHeader.getNumber())
-                  .type(REWARD_LABEL)
-                  .build());
-        });
+    Wei treasuryReward =
+        Wei.ZERO
+            .plus(MarklarUtils.getPart(blockReward, MarklarConfigOptions.treasuryBlockRewardPart))
+            .plus(MarklarUtils.getPart(feeReward, MarklarConfigOptions.treasuryBlockFeePart));
 
-    // add block reward trace
+    Wei operatorReward =
+        Wei.ZERO
+            .plus(MarklarUtils.getPart(blockReward, MarklarConfigOptions.operatorBlockRewardPart))
+            .plus(MarklarUtils.getPart(feeReward, MarklarConfigOptions.operatorBlockFeePart));
+
+    Wei validatorReward =
+        blockReward.plus(feeReward).subtract(treasuryReward).subtract(operatorReward);
+
+    // treasury reward = Uncle Reward
+    if (!treasuryReward.isZero()) {
+      final Action.Builder treasuryActionBuilder =
+          Action.builder()
+              .author(MarklarConfigOptions.treasuryAddress)
+              .rewardType(UNCLE_LABEL)
+              .value(treasuryReward.toShortHexString());
+      flatTraces.add(
+          RewardTrace.builder()
+              .actionBuilder(treasuryActionBuilder)
+              .blockHash(block.getHash().toHexString())
+              .blockNumber(blockHeader.getNumber())
+              .type(REWARD_LABEL)
+              .build());
+    }
+
+    // treasury reward = Emission Reward
+    if (!operatorReward.isZero()) {
+      final Action.Builder operatorActionBuilder =
+          Action.builder()
+              .author(MarklarConfigOptions.operatorAddress)
+              .rewardType("external")
+              .value(operatorReward.toShortHexString());
+      flatTraces.add(
+          RewardTrace.builder()
+              .actionBuilder(operatorActionBuilder)
+              .blockHash(block.getHash().toHexString())
+              .blockNumber(blockHeader.getNumber())
+              .type(REWARD_LABEL)
+              .build());
+    }
+
+    // validator reward = Miner Reward
     final Action.Builder blockActionBuilder =
         Action.builder()
             .author(miningBeneficiaryCalculator.calculateBeneficiary(blockHeader).toHexString())
             .rewardType(BLOCK_LABEL)
-            .value(coinbaseReward.toShortHexString());
+            .value(validatorReward.toShortHexString());
     flatTraces.add(
         0,
         RewardTrace.builder()

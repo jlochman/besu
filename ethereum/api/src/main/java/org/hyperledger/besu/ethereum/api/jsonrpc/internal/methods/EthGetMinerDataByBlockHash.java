@@ -30,7 +30,7 @@ import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.Hash;
 import org.hyperledger.besu.ethereum.core.Wei;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.util.MarklarUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -79,8 +79,7 @@ public class EthGetMinerDataByBlockHash implements JsonRpcMethod {
       final ProtocolSchedule protocolSchedule,
       final BlockchainQueries blockchainQueries) {
     final BlockHeader blockHeader = block.getHeader();
-    final ProtocolSpec protocolSpec = protocolSchedule.getByBlockNumber(blockHeader.getNumber());
-    final Wei staticBlockReward = protocolSpec.getBlockReward();
+    final Wei staticBlockReward = MarklarUtils.getBlockReward(blockHeader.getDifficulty());
     final Wei transactionFee =
         block.getTransactions().stream()
             .map(
